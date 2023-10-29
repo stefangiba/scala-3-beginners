@@ -2,7 +2,6 @@
 .bloop
 .bsp
 .metals
-
 project/metals.sbt
 
 # vs code
