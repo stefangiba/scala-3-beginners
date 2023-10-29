@@ -1,18 +1,10 @@
 package com.rockthejvm.practice
 
 import scala.annotation.tailrec
-import java.{util => ju}
+import java.util
 
 // singly linked list
 // [1, 2, 3] = [1] -> [2] -> [3] -> |
-
-trait Predicate[T] {
-  def test(elem: T): Boolean
-}
-
-trait Transformer[A, B] {
-  def transform(elem: A): B
-}
 
 abstract class LinkedList[A] {
   def head: A
@@ -21,10 +13,15 @@ abstract class LinkedList[A] {
 
   infix def ++(anotherList: LinkedList[A]): LinkedList[A]
   def reverse: LinkedList[A]
-  def filter(predicate: Predicate[A]): LinkedList[A]
-  def map[B](transformer: Transformer[A, B]): LinkedList[B]
-  def flatMap[B](transformer: Transformer[A, LinkedList[B]]): LinkedList[B]
+  def filter(predicate: A => Boolean): LinkedList[A]
+  def withFilter(predicate: A => Boolean): LinkedList[A] = filter(predicate)
+  def map[B](transformer: A => B): LinkedList[B]
+  def flatMap[B](transformer: A => LinkedList[B]): LinkedList[B]
   def add(element: A): LinkedList[A] = Cons(element, this)
+  def foreach(f: A => Unit): Unit
+  def zipWith[B](list: LinkedList[A], f: (A, A) => B): LinkedList[B]
+  def foldLeft[B](zero: B)(f: (B, A) => B): B
+  def sort(comparator: (A, A) => Int): LinkedList[A]
 }
 
 case class Empty[A]() extends LinkedList[A] {
@@ -34,12 +31,21 @@ case class Empty[A]() extends LinkedList[A] {
   override def toString: String    = "[]"
   override def ++(anotherList: LinkedList[A]): LinkedList[A]  = anotherList
   override def reverse: LinkedList[A]                         = Empty()
-  override def filter(predicate: Predicate[A]): LinkedList[A] = Empty()
-  override def map[B](transformer: Transformer[A, B]): LinkedList[B] =
+  override def filter(predicate: A => Boolean): LinkedList[A] = Empty()
+  override def map[B](transformer: A => B): LinkedList[B] =
     Empty()
   override def flatMap[B](
-      transformer: Transformer[A, LinkedList[B]]
+      transformer: A => LinkedList[B]
   ): LinkedList[B] = Empty()
+  override def foreach(f: A => Unit): Unit = ()
+  override def zipWith[B](list: LinkedList[A], f: (A, A) => B): LinkedList[B] =
+    if (!list.isEmpty)
+      throw new IllegalArgumentException(
+        "Can't zip empty list with non-empty list"
+      )
+    else Empty()
+  override def foldLeft[B](zero: B)(f: (B, A) => B): B        = zero
+  override def sort(comparator: (A, A) => Int): LinkedList[A] = Empty()
 }
 
 case class Cons[A](override val head: A, override val tail: LinkedList[A])
@@ -79,52 +85,109 @@ case class Cons[A](override val head: A, override val tail: LinkedList[A])
     go(this.tail, Cons(this.head, Empty()))
   }
 
-  override def filter(predicate: Predicate[A]): LinkedList[A] = {
+  override def filter(predicate: A => Boolean): LinkedList[A] = {
     @tailrec def go(
         remainder: LinkedList[A],
         acc: LinkedList[A]
     ): LinkedList[A] =
       if (remainder.isEmpty) acc
-      else if (predicate.test(remainder.head))
+      else if (predicate(remainder.head))
         go(remainder.tail, Cons(remainder.head, acc))
       else go(remainder.tail, acc)
 
     go(this, Empty()).reverse
   }
 
-  override def map[B](transformer: Transformer[A, B]): LinkedList[B] = {
+  override def map[B](transformer: A => B): LinkedList[B] = {
     @tailrec def go(
         remainder: LinkedList[A],
         acc: LinkedList[B]
     ): LinkedList[B] =
       if (remainder.isEmpty) acc
       else
-        go(remainder.tail, Cons(transformer.transform(remainder.head), acc))
+        go(remainder.tail, Cons(transformer(remainder.head), acc))
 
     go(
       this.tail,
-      Cons(transformer.transform(this.head), Empty())
+      Cons(transformer(this.head), Empty())
     ).reverse
   }
 
   override def flatMap[B](
-      transformer: Transformer[A, LinkedList[B]]
+      transformer: A => LinkedList[B]
   ): LinkedList[B] = {
     @tailrec def go(
         remainder: LinkedList[A],
         acc: LinkedList[B]
     ): LinkedList[B] =
       if (remainder.isEmpty) acc
-      else go(remainder.tail, transformer.transform(remainder.head) ++ acc)
+      else go(remainder.tail, transformer(remainder.head) ++ acc)
 
     go(this.reverse, Empty())
+  }
+
+  override def foreach(f: A => Unit): Unit = {
+    @tailrec def go(remainder: LinkedList[A]): Unit =
+      if (remainder.isEmpty) ()
+      else {
+        f(remainder.head)
+        go(remainder.tail)
+      }
+
+    go(this)
+  }
+
+  override def zipWith[B](
+      list: LinkedList[A],
+      zip: (A, A) => B
+  ): LinkedList[B] = {
+    @tailrec def go(
+        firstRemainder: LinkedList[A],
+        secondRemainder: LinkedList[A],
+        acc: LinkedList[B]
+    ): LinkedList[B] = {
+      if (
+        (firstRemainder.isEmpty && !secondRemainder.isEmpty) || (!firstRemainder.isEmpty && secondRemainder.isEmpty)
+      )
+        throw new IllegalArgumentException(
+          "The provided list need to be of the same length as this list order for them to be zipped."
+        )
+      else if (firstRemainder.isEmpty && secondRemainder.isEmpty) acc
+      else
+        go(
+          firstRemainder.tail,
+          secondRemainder.tail,
+          Cons(zip(firstRemainder.head, secondRemainder.head), acc)
+        )
+    }
+
+    go(this, list, Empty()).reverse
+  }
+
+  override def foldLeft[B](zero: B)(f: (B, A) => B): B = {
+    @tailrec def go(remainder: LinkedList[A], acc: B): B =
+      if (remainder.isEmpty) acc
+      else go(remainder.tail, f(acc, remainder.head))
+
+    go(this, zero)
+  }
+
+  override def sort(compare: (A, A) => Int): LinkedList[A] = {
+    // insertion sort, O(n^2), stack recursive
+    def insert(elem: A, sortedList: LinkedList[A]): LinkedList[A] =
+      if (sortedList.isEmpty) Cons(elem, Empty())
+      else if (compare(elem, sortedList.head) <= 0) Cons(elem, sortedList)
+      else Cons(sortedList.head, insert(elem, sortedList.tail))
+
+    val sortedTail = tail.sort(compare)
+    insert(head, sortedTail)
   }
 }
 
 object LinkedList {
-  def find[A](list: LinkedList[A], predicate: Predicate[A]): A =
+  def find[A](list: LinkedList[A], predicate: A => Boolean): A =
     if (list.isEmpty) throw new NoSuchElementException
-    else if (predicate.test(list.head)) list.head
+    else if (predicate(list.head)) list.head
     else find(list.tail, predicate)
 }
 
@@ -150,27 +213,17 @@ object LinkedListTest {
     println(someStrings.reverse)
     println(otherNumbers.reverse)
 
-    val evenPredicate = new Predicate[Int] {
-      override def test(elem: Int): Boolean = elem % 2 == 0
-    }
-
-    val doublerTransformer = new Transformer[Int, Int] {
-      override def transform(elem: Int): Int = elem * 2
-    }
-
-    val replicateAndIncrementTransformer =
-      new Transformer[Int, LinkedList[Int]] {
-        override def transform(elem: Int): LinkedList[Int] =
-          Cons(elem, Cons(elem + 1, Empty()))
-      }
-
-    println(otherNumbers.map(doublerTransformer))
-    println(otherNumbers.filter(evenPredicate))
+    println(otherNumbers.map(_ * 2))
+    println(otherNumbers.filter(_ % 2 == 0))
     println(otherNumbers ++ first3Numbers)
-    println(otherNumbers.flatMap(replicateAndIncrementTransformer))
+    println(otherNumbers.flatMap(x => Cons(x, Cons(x + 1, Empty()))))
 
     // find test
-    println(LinkedList.find(first3Numbers, evenPredicate))
-    println(LinkedList.find(empty, evenPredicate))
+    println(LinkedList.find(first3Numbers, _ % 2 == 0))
+    // println(LinkedList.find(empty, evenPredicate)) NoSuchElementException
+
+    first3Numbers.foreach(println)
+    println(first3Numbers.zipWith(first3Numbers, _ * _))
+    println(first3Numbers.foldLeft(0)(_ - _))
   }
 }
